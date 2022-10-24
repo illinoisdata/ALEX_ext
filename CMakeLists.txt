@@ -1,7 +1,11 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.14)
+include(FetchContent)
 project(alex)
 
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
+
+# Install boost
+add_subdirectory(boost-cmake)
 
 # Define the macro ‘DEBUG' in the debug mode
 if(CMAKE_BUILD_TYPE STREQUAL Debug)        
@@ -20,7 +24,22 @@ endif()
 include_directories(src/core)
 
 add_executable(example src/examples/main.cpp)
+target_link_libraries(example PUBLIC Boost::serialization)
+
+add_executable(boost_demo src/examples/boost_demo.cpp)
+target_link_libraries(boost_demo PUBLIC Boost::serialization)
+
+add_executable(alex_serde_demo src/examples/alex_serde_demo.cpp)
+target_link_libraries(alex_serde_demo PUBLIC Boost::serialization)
+
 add_executable(benchmark src/benchmark/main.cpp)
+target_link_libraries(benchmark PUBLIC Boost::serialization)
+
+add_executable(kv_build src/benchmark/kv_build.cpp)
+target_link_libraries(kv_build PUBLIC Boost::serialization)
+
+add_executable(kv_benchmark src/benchmark/kv_benchmark.cpp)
+target_link_libraries(kv_benchmark PUBLIC Boost::serialization)
 
 set(DOCTEST_DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/doctest)
 file(DOWNLOAD
@@ -31,6 +50,7 @@ file(DOWNLOAD
 
 add_executable(test_alex test/unittest_main.cpp)
 target_include_directories(test_alex PRIVATE ${DOCTEST_DOWNLOAD_DIR})
+target_link_libraries(test_alex PUBLIC Boost::serialization)
 
 enable_testing()
 add_test(test_alex test_alex)

@@ -2996,5 +2996,66 @@ class Alex {
 
     bool is_end() const { return cur_node_ == nullptr; }
   };
+
+ private:
+  friend class boost::serialization::access;
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version __attribute__((unused)))
+  {
+    // std::cout << "In Alex::save" << std::endl;
+    
+    // TODO: register templates in their header file
+    ar.template register_type<model_node_type>();
+    ar.template register_type<data_node_type>();
+
+    // // Serialize nodes iteratively first to avoid stack overflow
+    // std::cout << "  Alex -> all nodes" << std::endl;
+    // for (NodeIterator node_it = NodeIterator(this); !node_it.is_end(); node_it.next()) {
+    //   AlexNode<T, P>* node = node_it.current();
+    //   ar << node;
+    // }
+    
+    // Common, this should be in sync with load
+    // std::cout << "  Alex -> root_node_" << std::endl;
+    ar & root_node_;
+    // std::cout << "  Alex -> superroot_" << std::endl;
+    ar & superroot_;
+    // std::cout << "  Alex -> primitives" << std::endl;
+    ar & params_.expected_insert_frac;
+    ar & params_.max_node_size;
+    ar & params_.approximate_model_computation;
+    ar & params_.approximate_cost_computation;
+    ar & derived_params_.max_fanout;
+    ar & derived_params_.max_data_node_slots;
+    ar & stats_.num_keys;
+    ar & stats_.num_model_nodes;
+    ar & stats_.num_data_nodes;
+    ar & stats_.num_expand_and_scales;
+    ar & stats_.num_expand_and_retrains;
+    ar & stats_.num_downward_splits;
+    ar & stats_.num_sideways_splits;
+    ar & stats_.num_model_node_expansions;
+    ar & stats_.num_model_node_splits;
+    ar & stats_.num_downward_split_keys;
+    ar & stats_.num_sideways_split_keys;
+    ar & stats_.num_model_node_expansion_pointers;
+    ar & stats_.num_model_node_split_pointers;
+    ar & stats_.num_node_lookups;
+    ar & stats_.num_lookups;
+    ar & stats_.num_inserts;
+    ar & stats_.splitting_time;
+    ar & stats_.cost_computation_time;
+    ar & experimental_params_.fanout_selection_method;
+    ar & experimental_params_.splitting_policy_method;
+    ar & experimental_params_.allow_splitting_upwards;
+    ar & istats_.key_domain_min_;
+    ar & istats_.key_domain_max_;
+    ar & istats_.num_keys_above_key_domain;
+    ar & istats_.num_keys_below_key_domain;
+    ar & istats_.num_keys_at_last_right_domain_resize;
+    ar & istats_.num_keys_at_last_left_domain_resize;
+    // ar & key_less_;
+    // ar & allocator_;
+  }
 };
 }  // namespace alex

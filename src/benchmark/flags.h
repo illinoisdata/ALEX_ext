@@ -46,6 +46,7 @@ std::string get_required(const std::map<std::string, std::string>& m,
   auto it = m.find(key);
   if (it == m.end()) {
     std::cout << "Required flag --" << key << " was not found" << std::endl;
+    throw std::invalid_argument("Missing required flag.");
   }
   return it->second;
 }

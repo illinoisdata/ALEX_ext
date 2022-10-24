@@ -37,6 +37,14 @@ typedef unsigned __int32 uint32_t;
 #include <stdint.h>
 #endif
 
+#include <boost/archive/binary_oarchive.hpp>
+#include <boost/archive/binary_iarchive.hpp>
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
+#include <boost/serialization/base_object.hpp>
+#include <boost/serialization/export.hpp>
+#include <boost/serialization/serialization.hpp>
+
 #ifdef _MSC_VER
 #define forceinline __forceinline
 #elif defined(__GNUC__)
@@ -81,6 +89,16 @@ class LinearModel {
 
   inline double predict_double(T key) const {
     return a_ * static_cast<double>(key) + b_;
+  }
+
+ private:
+  friend class boost::serialization::access;
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version __attribute__((unused)))
+  {
+    // std::cout << "In LinearModel::serialize" << std::endl;
+    ar & a_;
+    ar & b_;
   }
 };
 

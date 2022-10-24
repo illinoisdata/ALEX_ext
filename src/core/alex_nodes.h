@@ -32,6 +32,11 @@
 
 namespace alex {
 
+// For debugging
+int ar_count = 0;
+int amn_ar_count = 0;
+int adn_ar_count = 0;
+
 // A parent class for both types of ALEX nodes
 template <class T, class P>
 class AlexNode {
@@ -62,6 +67,19 @@ class AlexNode {
 
   // The size in bytes of all member variables in this class
   virtual long long node_size() const = 0;
+
+ private:
+  friend class boost::serialization::access;
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version __attribute__((unused)))
+  {
+    // if (++ar_count % 1000 == 0) std::cout << "In AlexNode::serialize [" << ar_count << "]" << std::endl;
+    ar & is_leaf_;
+    ar & duplication_factor_;
+    ar & level_ ;
+    ar & model_;
+    ar & cost_;
+  }
 };
 
 template <class T, class P, class Alloc = std::allocator<std::pair<T, P>>>
@@ -271,6 +289,25 @@ class AlexModelNode : public AlexNode<T, P> {
     }
 
     return true;
+  }
+
+ private:
+  friend class boost::serialization::access;
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version __attribute__((unused)))
+  {
+    // if (++amn_ar_count % 1000 == 0) std::cout << "In AlexModelNode::serialize [" << amn_ar_count << "]" << std::endl;
+    ar & boost::serialization::base_object<AlexNode<T, P>>(*this);
+    // ar & allocator_;
+    ar & num_children_;
+    if (num_children_ > 0 && children_ == nullptr) {
+      // HACK: assuming this is true only during load.
+      children_ = new (pointer_allocator().allocate(num_children_))
+          AlexNode<T, P>*[num_children_];
+    }
+    for (int i = 0; i < num_children_; ++i) {
+      ar & children_[i];
+    }
   }
 };
 
@@ -2324,6 +2361,78 @@ class AlexDataNode : public AlexNode<T, P> {
       str += (std::to_string(ALEX_DATA_NODE_KEY_AT(i)) + " ");
     }
     return str;
+  }
+ private:
+  friend class boost::serialization::access;
+  template<class Archive>
+  void serialize(Archive & ar, const unsigned int version __attribute__((unused)))
+  {
+    // if (++adn_ar_count % 1000 == 0) std::cout << "In AlexDataNode::serialize [" << adn_ar_count << "], \t" << static_cast<void*>(this) << std::endl;
+    ar & boost::serialization::base_object<AlexNode<T, P>>(*this);
+    // ar & key_less_;
+    // ar & allocator_;
+    
+    // std::cout << "AlexDataNode::arrays" << std::endl;
+    ar & data_capacity_;
+    ar & num_keys_;
+    #if ALEX_DATA_NODE_SEP_ARRAYS
+    // Needs to iterate because key_slots_ and payload_slots_ are pointers.
+    if (data_capacity_ > 0 && key_slots_ == nullptr && payload_slots_ == nullptr) {
+      // HACK: assuming this is true only during load.
+      key_slots_ =
+          new (key_allocator().allocate(data_capacity_)) T[data_capacity_];
+      payload_slots_ =
+          new (payload_allocator().allocate(data_capacity_)) P[data_capacity_];
+    }
+    for (int i = 0; i < data_capacity_; ++i) {
+      ar & key_slots_[i];
+    }
+    for (int i = 0; i < data_capacity_; ++i) {
+      ar & payload_slots_[i];
+    }
+    #else
+    // Needs to iterate because data_slots_ is a pointer.
+    if (data_capacity_ > 0 && data_slots_ == nullptr) {
+      // HACK: assuming this is true only during load.
+      data_slots_ =
+          new (value_allocator().allocate(data_capacity_)) V[data_capacity];
+    }
+    for (int i = 0; i < data_capacity_; ++i) {
+      ar & data_slots_[i];
+    }
+    #endif
+
+    // std::cout << "AlexDataNode::bitmap" << std::endl;
+    ar & bitmap_size_;
+    if (bitmap_size_ > 0 && bitmap_ == nullptr) {
+      // HACK: assuming this is true only during load.
+      bitmap_ = new (bitmap_allocator().allocate(bitmap_size_))
+          uint64_t[bitmap_size_]();  // initialize to all false
+    }
+    for (int i = 0; i < bitmap_size_; ++i) {
+      ar & bitmap_[i];
+    }
+
+    // std::cout << "AlexDataNode::primitives" << std::endl;
+    ar & expansion_threshold_;
+    ar & contraction_threshold_;
+    ar & max_slots_;
+    ar & num_shifts_;
+    ar & num_exp_search_iterations_;
+    ar & num_lookups_;
+    ar & num_inserts_;
+    ar & num_resizes_;
+    ar & max_key_;
+    ar & min_key_;
+    ar & num_right_out_of_bounds_inserts_;
+    ar & num_left_out_of_bounds_inserts_;
+    ar & expected_avg_exp_search_iterations_;
+    ar & expected_avg_shifts_;
+    
+    // // Serialize cousins in the end to avoid recursion stack overflow.
+    // std::cout << "AlexDataNode::cousins (" << static_cast<void*>(prev_leaf_) << ", " << static_cast<void*>(next_leaf_) << ")" << std::endl;
+    // ar & next_leaf_;  // AlexDataNode
+    // ar & prev_leaf_;  // AlexDataNode
   }
 };
 }

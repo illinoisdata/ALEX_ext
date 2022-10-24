@@ -32,6 +32,22 @@ bool load_text_data(T array[], int length, const std::string& file_path) {
 }
 
 template <class T>
+bool load_sosd_data(T data[], int length, const std::string& file_path) {
+  std::ifstream is(file_path.c_str(), std::ios::binary | std::ios::in);
+  if (!is.is_open()) {
+    return false;
+  }
+  {
+    // Read and discard first 8 bytes of SOSD blob (number of key).
+    char num_keys[8];
+    is.read(&num_keys[0], std::streamsize(sizeof(uint64_t)));
+  }
+  is.read(reinterpret_cast<char*>(data), std::streamsize(length * sizeof(T)));
+  is.close();
+  return true;
+}
+
+template <class T>
 T* get_search_keys(T array[], int num_keys, int num_searches) {
   std::mt19937_64 gen(std::random_device{}());
   std::uniform_int_distribution<int> dis(0, num_keys - 1);
