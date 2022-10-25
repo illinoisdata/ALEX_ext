@@ -64,6 +64,8 @@ class Alex {
   typedef Alex<T, P, Compare, Alloc, allow_duplicates> self_type;
   typedef AlexModelNode<T, P, Alloc> model_node_type;
   typedef AlexDataNode<T, P, Compare, Alloc, allow_duplicates> data_node_type;
+  typedef Chunk<T, P, Compare, Alloc> chunk_type;
+  typedef DataChunk<T, P, Compare, Alloc> data_chunk_type;
 
   // Forward declaration for iterators
   class Iterator;
@@ -206,31 +208,34 @@ class Alex {
   Compare key_less_ = Compare();
   Alloc allocator_ = Alloc();
 
+  // For serialization and lazy deserialization
+  Pager<T, P>* pager_ = nullptr;
+
   /*** Constructors and setters ***/
 
  public:
-  Alex() {
+  Alex(Pager<T, P>* pager) : pager_(pager) {
     // Set up root as empty data node
     auto empty_data_node = new (data_node_allocator().allocate(1))
-        data_node_type(key_less_, allocator_);
+        data_node_type(pager_, key_less_, allocator_);
     empty_data_node->bulk_load(nullptr, 0);
     root_node_ = empty_data_node;
     stats_.num_data_nodes++;
     create_superroot();
   }
 
-  Alex(const Compare& comp, const Alloc& alloc = Alloc())
-      : key_less_(comp), allocator_(alloc) {
+  Alex(Pager<T, P>* pager, const Compare& comp, const Alloc& alloc = Alloc())
+      : pager_(pager), key_less_(comp), allocator_(alloc) {
     // Set up root as empty data node
     auto empty_data_node = new (data_node_allocator().allocate(1))
-        data_node_type(key_less_, allocator_);
+        data_node_type(pager_, key_less_, allocator_);
     empty_data_node->bulk_load(nullptr, 0);
     root_node_ = empty_data_node;
     stats_.num_data_nodes++;
     create_superroot();
   }
 
-  Alex(const Alloc& alloc) : allocator_(alloc) {
+  Alex(Pager<T, P>* pager, const Alloc& alloc) : pager_(pager), allocator_(alloc) {
     // Set up root as empty data node
     auto empty_data_node = new (data_node_allocator().allocate(1))
         data_node_type(key_less_, allocator_);
@@ -252,9 +257,9 @@ class Alex {
   // sorted. This creates a temporary copy of the data. If possible, we
   // recommend directly using bulk_load() instead.
   template <class InputIterator>
-  explicit Alex(InputIterator first, InputIterator last, const Compare& comp,
+  explicit Alex(InputIterator first, InputIterator last, Pager<T, P>* pager, const Compare& comp,
                 const Alloc& alloc = Alloc())
-      : key_less_(comp), allocator_(alloc) {
+      : pager_(pager), key_less_(comp), allocator_(alloc) {
     std::vector<V> values;
     for (auto it = first; it != last; ++it) {
       values.push_back(*it);
@@ -271,8 +276,9 @@ class Alex {
   // recommend directly using bulk_load() instead.
   template <class InputIterator>
   explicit Alex(InputIterator first, InputIterator last,
+                Pager<T, P>* pager,
                 const Alloc& alloc = Alloc())
-      : allocator_(alloc) {
+      : pager_(pager), allocator_(alloc) {
     std::vector<V> values;
     for (auto it = first; it != last; ++it) {
       values.push_back(*it);
@@ -290,6 +296,7 @@ class Alex {
         stats_(other.stats_),
         experimental_params_(other.experimental_params_),
         istats_(other.istats_),
+        pager_(other.pager_),
         key_less_(other.key_less_),
         allocator_(other.allocator_) {
     superroot_ =
@@ -309,6 +316,7 @@ class Alex {
       experimental_params_ = other.experimental_params_;
       istats_ = other.istats_;
       stats_ = other.stats_;
+      pager_ = other.pager_;
       key_less_ = other.key_less_;
       allocator_ = other.allocator_;
       superroot_ =
@@ -324,6 +332,7 @@ class Alex {
     std::swap(experimental_params_, other.experimental_params_);
     std::swap(istats_, other.istats_);
     std::swap(stats_, other.stats_);
+    std::swap(&pager_, &other.pager_);
     std::swap(key_less_, other.key_less_);
     std::swap(allocator_, other.allocator_);
     std::swap(superroot_, other.superroot_);
@@ -691,7 +700,7 @@ class Alex {
     if (!root_node_) return;
     delete_node(superroot_);
     superroot_ = new (model_node_allocator().allocate(1))
-        model_node_type(static_cast<short>(root_node_->level_ - 1), allocator_);
+        model_node_type(static_cast<short>(root_node_->level_ - 1), pager_, allocator_);
     superroot_->num_children_ = 1;
     superroot_->children_ =
         new (pointer_allocator().allocate(1)) AlexNode<T, P>*[1];
@@ -737,6 +746,7 @@ class Alex {
       stats_.num_data_nodes++;
       auto data_node = new (data_node_allocator().allocate(1))
           data_node_type(node->level_, derived_params_.max_data_node_slots,
+                         pager_,
                          key_less_, allocator_);
       data_node->bulk_load(values, num_keys, data_node_model,
                            params_.approximate_model_computation);
@@ -775,7 +785,7 @@ class Alex {
       // Convert to model node based on the output of the fanout tree
       stats_.num_model_nodes++;
       auto model_node = new (model_node_allocator().allocate(1))
-          model_node_type(node->level_, allocator_);
+          model_node_type(node->level_, pager_, allocator_);
       if (best_fanout_tree_depth == 0) {
         // slightly hacky: we assume this means that the node is relatively
         // uniform but we need to split in
@@ -806,7 +816,7 @@ class Alex {
       int cur = 0;
       for (fanout_tree::FTNode& tree_node : used_fanout_tree_nodes) {
         auto child_node = new (model_node_allocator().allocate(1))
-            model_node_type(static_cast<short>(node->level_ + 1), allocator_);
+            model_node_type(static_cast<short>(node->level_ + 1), pager_, allocator_);
         child_node->cost_ = tree_node.cost;
         child_node->duplication_factor_ =
             static_cast<uint8_t>(best_fanout_tree_depth - tree_node.level);
@@ -846,6 +856,7 @@ class Alex {
       stats_.num_data_nodes++;
       auto data_node = new (data_node_allocator().allocate(1))
           data_node_type(node->level_, derived_params_.max_data_node_slots,
+                         pager_,
                          key_less_, allocator_);
       data_node->bulk_load(values, num_keys, data_node_model,
                            params_.approximate_model_computation);
@@ -863,7 +874,7 @@ class Alex {
       bool reuse_model = false, bool keep_left = false,
       bool keep_right = false) {
     auto node = new (data_node_allocator().allocate(1))
-        data_node_type(key_less_, allocator_);
+        data_node_type(pager_, key_less_, allocator_);
     stats_.num_data_nodes++;
     if (tree_node) {
       // Use the model and num_keys saved in the tree node so we don't have to
@@ -1436,7 +1447,7 @@ class Alex {
     } else {
       // Create new root node
       auto new_root = new (model_node_allocator().allocate(1))
-          model_node_type(static_cast<short>(root->level_ - 1), allocator_);
+          model_node_type(static_cast<short>(root->level_ - 1), pager_, allocator_);
       new_root->model_.a_ = root->model_.a_ / root->num_children_;
       new_root->model_.b_ = root->model_.b_ / root->num_children_;
       if (expand_left) {
@@ -1574,7 +1585,7 @@ class Alex {
     // Create the new model node that will replace the current data node
     int fanout = 1 << fanout_tree_depth;
     auto new_node = new (model_node_allocator().allocate(1))
-        model_node_type(leaf->level_, allocator_);
+        model_node_type(leaf->level_, pager_, allocator_);
     new_node->duplication_factor_ = leaf->duplication_factor_;
     new_node->num_children_ = fanout;
     new_node->children_ =
@@ -1929,19 +1940,19 @@ class Alex {
         // pull up right child if all children in the right half are the same
         pull_up_right_child = true;
         left_split = new (model_node_allocator().allocate(1))
-            model_node_type(cur_node->level_, allocator_);
+            model_node_type(cur_node->level_, pager_, allocator_);
       } else if (!double_left_half &&
                  (1 << left_half_first_child->duplication_factor_) ==
                      cur_node->num_children_ / 2) {
         // pull up left child if all children in the left half are the same
         pull_up_left_child = true;
         right_split = new (model_node_allocator().allocate(1))
-            model_node_type(cur_node->level_, allocator_);
+            model_node_type(cur_node->level_, pager_, allocator_);
       } else {
         left_split = new (model_node_allocator().allocate(1))
-            model_node_type(cur_node->level_, allocator_);
+            model_node_type(cur_node->level_, pager_, allocator_);
         right_split = new (model_node_allocator().allocate(1))
-            model_node_type(cur_node->level_, allocator_);
+            model_node_type(cur_node->level_, pager_, allocator_);
       }
 
       // Do the split
@@ -3007,19 +3018,16 @@ class Alex {
     // TODO: register templates in their header file
     ar.template register_type<model_node_type>();
     ar.template register_type<data_node_type>();
+    ar.template register_type<chunk_type>();
+    ar.template register_type<data_chunk_type>();
 
-    // // Serialize nodes iteratively first to avoid stack overflow
-    // std::cout << "  Alex -> all nodes" << std::endl;
-    // for (NodeIterator node_it = NodeIterator(this); !node_it.is_end(); node_it.next()) {
-    //   AlexNode<T, P>* node = node_it.current();
-    //   ar << node;
-    // }
-    
-    // Common, this should be in sync with load
+    // Recursive node structure
     // std::cout << "  Alex -> root_node_" << std::endl;
     ar & root_node_;
     // std::cout << "  Alex -> superroot_" << std::endl;
     ar & superroot_;
+
+    // Primitives
     // std::cout << "  Alex -> primitives" << std::endl;
     ar & params_.expected_insert_frac;
     ar & params_.max_node_size;
@@ -3054,8 +3062,19 @@ class Alex {
     ar & istats_.num_keys_below_key_domain;
     ar & istats_.num_keys_at_last_right_domain_resize;
     ar & istats_.num_keys_at_last_left_domain_resize;
+
     // ar & key_less_;
     // ar & allocator_;
+
+    // Serialize node chunky data once
+    // std::cout << "  Alex -> data chunks" << std::endl;
+    for (NodeIterator node_it = NodeIterator(this); !node_it.is_end(); node_it.next()) {
+      AlexNode<T, P>* node = node_it.current();
+      node->serialize_with_pager(ar, pager_);
+    }
+
+    // // Link cousin pointers (TODO: test to confirm)
+    // link_all_data_nodes();
   }
 };
 }  // namespace alex

@@ -23,9 +23,11 @@ void populate_alex(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index) {
   }
 
   // Bulk load the keys [0, 100)
+  std::cout << "Bulk load the keys [0, 100)" << std::endl;
   index.bulk_load(values, num_keys);
 
   // Insert the keys [100, 200). Now there are 200 keys.
+  std::cout << "Insert the keys [100, 200). Now there are 200 keys." << std::endl;
   for (int i = num_keys; i < 2 * num_keys; i++) {
     KEY_TYPE new_key = i;
     PAYLOAD_TYPE new_payload = dis(gen);
@@ -33,11 +35,13 @@ void populate_alex(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index) {
   }
 
   // Erase the keys [0, 10). Now there are 190 keys.
+  std::cout << "Erase the keys [0, 10). Now there are 190 keys." << std::endl;
   for (int i = 0; i < 10; i++) {
     index.erase(i);
   }
 
   // Iterate through all entries in the index and update their payload if the
+  std::cout << "Iterate through all entries in the index and update their payload if the" << std::endl;
   // key is even
   int num_entries = 0;
   for (auto it = index.begin(); it != index.end(); it++) {
@@ -52,6 +56,7 @@ void populate_alex(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index) {
   }
 
   // Iterate through all entries with keys between 50 (inclusive) and 100
+  std::cout << "Iterate through all entries with keys between 50 (inclusive) and 100" << std::endl;
   // (exclusive)
   num_entries = 0;
   for (auto it = index.lower_bound(50); it != index.lower_bound(100); it++) {
@@ -64,6 +69,7 @@ void populate_alex(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index) {
   }
 
   // Equivalent way of iterating through all entries with keys between 50
+  std::cout << "Equivalent way of iterating through all entries with keys between 50" << std::endl;
   // (inclusive) and 100 (exclusive)
   num_entries = 0;
   auto it = index.lower_bound(50);
@@ -78,6 +84,7 @@ void populate_alex(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index) {
   }
 
   // Insert 9 more keys with value 42. Now there are 199 keys.
+  std::cout << "Insert 9 more keys with value 42. Now there are 199 keys." << std::endl;
   for (int i = 0; i < 9; i++) {
     KEY_TYPE new_key = 42;
     PAYLOAD_TYPE new_payload = dis(gen);
@@ -111,14 +118,17 @@ void check_after(alex::Alex<KEY_TYPE, PAYLOAD_TYPE> &index) {
 }
 
 int main(int, char**) {
+  std::string alex_path = "/tmp/alex_demo";
+  std::string alex_page_path = "/tmp/alex_page_demo";
   {
     // Create an alex
-    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index;
+    alex::WritePager<KEY_TYPE, PAYLOAD_TYPE> pager(alex_page_path);
+    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index(&pager);
     populate_alex(index);
     check_after(index);
 
     // Serialize this alex
-    std::ofstream ofs("/tmp/alex_demo");
+    std::ofstream ofs(alex_path);
     boost::archive::text_oarchive oa(ofs);
     // oa.register_type<alex::AlexModelNode<KEY_TYPE, PAYLOAD_TYPE>>();
     // oa.register_type<alex::AlexDataNode<KEY_TYPE, PAYLOAD_TYPE>>();
@@ -127,8 +137,9 @@ int main(int, char**) {
   }
   {
     // Deserialize
-    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index;
-    std::ifstream ifs("/tmp/alex_demo");
+    alex::ReadPager<KEY_TYPE, PAYLOAD_TYPE> pager(alex_page_path);
+    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index(&pager);
+    std::ifstream ifs(alex_path);
     boost::archive::text_iarchive ia(ifs);
     // ia.register_type<alex::AlexModelNode<KEY_TYPE, PAYLOAD_TYPE>>();
     // ia.register_type<alex::AlexDataNode<KEY_TYPE, PAYLOAD_TYPE>>();
@@ -139,6 +150,9 @@ int main(int, char**) {
     check_after(index);
 
     // Continue mutating
+    std::cout << std::endl;
+    std::cout << "!!! Ignore errors after this point !!!" << std::endl;
+    std::cout << std::endl;
     populate_alex(index);
     check_after(index);
   }

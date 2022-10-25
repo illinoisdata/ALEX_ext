@@ -59,6 +59,12 @@ typedef unsigned __int32 uint32_t;
 #define forceinline inline
 #endif
 
+// Whether we store key and payload arrays separately in data nodes
+// By default, we store them separately
+#define ALEX_DATA_NODE_SEP_ARRAYS 1
+
+#include "pager.h"
+
 namespace alex {
 
 /*** Linear model and model builder ***/

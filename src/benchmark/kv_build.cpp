@@ -5,8 +5,9 @@
  * Build and save alex to file
  *
  * Examples:
-    ./kv_build --keys_file=../resources/fb_1M_uint64 --keys_file_type=sosd --total_num_keys=1000000 --db_path=tmp/alex_whole/fb_1M_uint64
-    ./kv_build --keys_file=../resources/gmm_k10_1M_uint64 --keys_file_type=sosd --total_num_keys=1000000 --db_path=tmp/alex_whole/gmm_k10_1M_uint64
+    ./kv_build --keys_file=../resources/fb_1M_uint64 --keys_file_type=sosd --total_num_keys=1000000 --db_path=tmp/alex/fb_1M_uint64
+    ./kv_build --keys_file=../resources/gmm_k10_1M_uint64 --keys_file_type=sosd --total_num_keys=1000000 --db_path=tmp/alex/gmm_k10_1M_uint64
+    ./kv_build --keys_file=../resources/fb_200M_uint64 --keys_file_type=sosd --total_num_keys=200000000 --db_path=tmp/alex/fb_200M_uint64
  */
 
 #include "../core/alex.h"
@@ -71,6 +72,7 @@ int main(int argc, char* argv[]) {
   std::string keys_file_type = get_required(flags, "keys_file_type");
   auto total_num_keys = stoi(get_required(flags, "total_num_keys"));
   std::string db_path = get_required(flags, "db_path");
+  std::string db_path_page = db_path + "_page";  // TODO: Configurable
 
   // Prepare directory
   if (!fs::is_directory(db_path) || !fs::exists(db_path)) {
@@ -109,7 +111,8 @@ int main(int argc, char* argv[]) {
 
   // Create ALEX and bulk load
   auto bulk_load_start_time = std::chrono::high_resolution_clock::now();
-  alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index;
+  alex::WritePager<KEY_TYPE, PAYLOAD_TYPE> pager(db_path_page);
+  alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index(&pager);
   index.bulk_load(values, total_num_keys);
   auto bulk_load_end_time = std::chrono::high_resolution_clock::now();
   auto bulk_load_time = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -128,7 +131,8 @@ int main(int argc, char* argv[]) {
 
   // Test load alex from file
   {
-    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> new_index;
+    alex::ReadPager<KEY_TYPE, PAYLOAD_TYPE> new_pager(db_path_page);
+    alex::Alex<KEY_TYPE, PAYLOAD_TYPE> new_index(&new_pager);
     std::ifstream ifs(db_path);
     boost::archive::binary_iarchive ia(ifs);
     ia >> new_index;

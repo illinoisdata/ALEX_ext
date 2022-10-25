@@ -11,10 +11,7 @@
 #pragma once
 
 #include "alex_base.h"
-
-// Whether we store key and payload arrays separately in data nodes
-// By default, we store them separately
-#define ALEX_DATA_NODE_SEP_ARRAYS 1
+#include "chunk.h"
 
 #if ALEX_DATA_NODE_SEP_ARRAYS
 #define ALEX_DATA_NODE_KEY_AT(i) key_slots_[i]
@@ -60,10 +57,40 @@ class AlexNode {
   // is used
   double cost_ = 0.0;
 
+  Pager<T, P>* pager_ = pager_;
+  Chunk<T, P>* chunk_ = nullptr;
+  virtual Chunk<T, P>* to_chunk() {
+    if (chunk_ == nullptr) {
+      chunk_ = new Chunk<T, P>();
+    }
+    return chunk_;
+  }
+  virtual void consume_chunk(Chunk<T, P>* chunk __attribute__((unused))) {
+    return;
+  }
+  template<class Archive>
+  void serialize_with_pager(Archive & ar, Pager<T, P>* pager) {
+    pager_ = pager;
+    if (Archive::is_saving::value) {
+      Chunk<T, P>* chunk = this->to_chunk();
+      ar & chunk;
+    } else if (Archive::is_loading::value) {
+      Chunk<T, P>* chunk = nullptr;
+      ar & chunk;
+      if (chunk->continue_load_from_pager(pager_)) {
+        this->consume_chunk(chunk);
+      }
+    }
+  }
+
   AlexNode() = default;
-  explicit AlexNode(short level) : level_(level) {}
-  AlexNode(short level, bool is_leaf) : is_leaf_(is_leaf), level_(level) {}
-  virtual ~AlexNode() = default;
+  explicit AlexNode(short level, Pager<T, P>* pager) : level_(level), pager_(pager) {}
+  AlexNode(short level, bool is_leaf, Pager<T, P>* pager) : is_leaf_(is_leaf), level_(level), pager_(pager) {}
+  virtual ~AlexNode() {
+    if (chunk_ != nullptr) {
+      delete chunk_;
+    }
+  }
 
   // The size in bytes of all member variables in this class
   virtual long long node_size() const = 0;
@@ -98,11 +125,11 @@ class AlexModelNode : public AlexNode<T, P> {
   // Array of pointers to children
   AlexNode<T, P>** children_ = nullptr;
 
-  explicit AlexModelNode(const Alloc& alloc = Alloc())
-      : AlexNode<T, P>(0, false), allocator_(alloc) {}
+  explicit AlexModelNode(Pager<T, P>* pager = nullptr, const Alloc& alloc = Alloc())
+      : AlexNode<T, P>(0, false, pager), allocator_(alloc) {}
 
-  explicit AlexModelNode(short level, const Alloc& alloc = Alloc())
-      : AlexNode<T, P>(level, false), allocator_(alloc) {}
+  explicit AlexModelNode(short level, Pager<T, P>* pager = nullptr, const Alloc& alloc = Alloc())
+      : AlexNode<T, P>(level, false, pager), allocator_(alloc) {}
 
   ~AlexModelNode() {
     if (children_ == nullptr) {
@@ -300,8 +327,7 @@ class AlexModelNode : public AlexNode<T, P> {
     ar & boost::serialization::base_object<AlexNode<T, P>>(*this);
     // ar & allocator_;
     ar & num_children_;
-    if (num_children_ > 0 && children_ == nullptr) {
-      // HACK: assuming this is true only during load.
+    if (Archive::is_loading::value) {
       children_ = new (pointer_allocator().allocate(num_children_))
           AlexNode<T, P>*[num_children_];
     }
@@ -357,6 +383,7 @@ class AlexDataNode : public AlexNode<T, P> {
 #else
   V* data_slots_ = nullptr;  // holds key-payload pairs
 #endif
+  bool loaded_from_mmap_ = false;
 
   int data_capacity_ = 0;  // size of key/data_slots array
   int num_keys_ = 0;  // number of filled key/data slots (as opposed to gaps)
@@ -416,18 +443,22 @@ class AlexDataNode : public AlexNode<T, P> {
 
   /*** Constructors and destructors ***/
 
-  explicit AlexDataNode(const Compare& comp = Compare(),
+  explicit AlexDataNode(Pager<T, P>* pager = nullptr, const Compare& comp = Compare(),
                         const Alloc& alloc = Alloc())
-      : AlexNode<T, P>(0, true), key_less_(comp), allocator_(alloc) {}
+      : AlexNode<T, P>(0, true, pager), key_less_(comp), allocator_(alloc) {}
 
   AlexDataNode(short level, int max_data_node_slots,
+               Pager<T, P>* pager,
                const Compare& comp = Compare(), const Alloc& alloc = Alloc())
-      : AlexNode<T, P>(level, true),
+      : AlexNode<T, P>(level, true, pager),
         key_less_(comp),
         allocator_(alloc),
         max_slots_(max_data_node_slots) {}
 
   ~AlexDataNode() {
+    if (loaded_from_mmap_) {
+      return;
+    }
 #if ALEX_DATA_NODE_SEP_ARRAYS
     if (key_slots_ == nullptr) {
       return;
@@ -2365,9 +2396,8 @@ class AlexDataNode : public AlexNode<T, P> {
  private:
   friend class boost::serialization::access;
   template<class Archive>
-  void serialize(Archive & ar, const unsigned int version __attribute__((unused)))
-  {
-    // if (++adn_ar_count % 1000 == 0) std::cout << "In AlexDataNode::serialize [" << adn_ar_count << "], \t" << static_cast<void*>(this) << std::endl;
+  void serialize(Archive & ar, const unsigned int version __attribute__((unused))) {
+    // if (++adn_ar_count % 1000 == 0) std::cout << "In AlexDataNode::serialize [" << adn_ar_count << "], \t" << this << std::endl;
     ar & boost::serialization::base_object<AlexNode<T, P>>(*this);
     // ar & key_less_;
     // ar & allocator_;
@@ -2375,43 +2405,9 @@ class AlexDataNode : public AlexNode<T, P> {
     // std::cout << "AlexDataNode::arrays" << std::endl;
     ar & data_capacity_;
     ar & num_keys_;
-    #if ALEX_DATA_NODE_SEP_ARRAYS
-    // Needs to iterate because key_slots_ and payload_slots_ are pointers.
-    if (data_capacity_ > 0 && key_slots_ == nullptr && payload_slots_ == nullptr) {
-      // HACK: assuming this is true only during load.
-      key_slots_ =
-          new (key_allocator().allocate(data_capacity_)) T[data_capacity_];
-      payload_slots_ =
-          new (payload_allocator().allocate(data_capacity_)) P[data_capacity_];
-    }
-    for (int i = 0; i < data_capacity_; ++i) {
-      ar & key_slots_[i];
-    }
-    for (int i = 0; i < data_capacity_; ++i) {
-      ar & payload_slots_[i];
-    }
-    #else
-    // Needs to iterate because data_slots_ is a pointer.
-    if (data_capacity_ > 0 && data_slots_ == nullptr) {
-      // HACK: assuming this is true only during load.
-      data_slots_ =
-          new (value_allocator().allocate(data_capacity_)) V[data_capacity];
-    }
-    for (int i = 0; i < data_capacity_; ++i) {
-      ar & data_slots_[i];
-    }
-    #endif
 
     // std::cout << "AlexDataNode::bitmap" << std::endl;
     ar & bitmap_size_;
-    if (bitmap_size_ > 0 && bitmap_ == nullptr) {
-      // HACK: assuming this is true only during load.
-      bitmap_ = new (bitmap_allocator().allocate(bitmap_size_))
-          uint64_t[bitmap_size_]();  // initialize to all false
-    }
-    for (int i = 0; i < bitmap_size_; ++i) {
-      ar & bitmap_[i];
-    }
 
     // std::cout << "AlexDataNode::primitives" << std::endl;
     ar & expansion_threshold_;
@@ -2429,10 +2425,38 @@ class AlexDataNode : public AlexNode<T, P> {
     ar & expected_avg_exp_search_iterations_;
     ar & expected_avg_shifts_;
     
-    // // Serialize cousins in the end to avoid recursion stack overflow.
-    // std::cout << "AlexDataNode::cousins (" << static_cast<void*>(prev_leaf_) << ", " << static_cast<void*>(next_leaf_) << ")" << std::endl;
+    // Skip cousins to avoid recursion stack overflow, will be done in Alex::serialize
+    // std::cout << "AlexDataNode::cousins (" << prev_leaf_ << ", " << next_leaf_ << ")" << std::endl;
     // ar & next_leaf_;  // AlexDataNode
     // ar & prev_leaf_;  // AlexDataNode
+  }
+public:
+  Chunk<T, P>* to_chunk() override {
+    if (AlexNode<T, P>::chunk_ == nullptr) {
+      #if ALEX_DATA_NODE_SEP_ARRAYS
+      AlexNode<T, P>::chunk_ = new DataChunk<T, P>(
+                AlexNode<T, P>::pager_, data_capacity_, bitmap_size_,
+                bitmap_, key_slots_, payload_slots_);
+      #else
+      AlexNode<T, P>::chunk_ = new DataChunk<T, P>(
+                AlexNode<T, P>::pager_, data_capacity_, bitmap_size_,
+                bitmap_, data_slots_);
+      #endif
+    }
+    return AlexNode<T, P>::chunk_;
+  }
+  void consume_chunk(Chunk<T, P>* chunk) override {
+    AlexNode<T, P>::chunk_ = chunk;
+    DataChunk<T, P>* data_chunk = (DataChunk<T, P>*) chunk;  // HACK
+    #if ALEX_DATA_NODE_SEP_ARRAYS
+    key_slots_ = data_chunk->key_slots_;
+    payload_slots_ = data_chunk->payload_slots_;
+    #else
+    data_slots_ = data_chunk->data_slots_;
+    #endif
+    bitmap_ = data_chunk->bitmap_;
+    loaded_from_mmap_ = data_chunk->has_pager_;
+    return;
   }
 };
 }

@@ -114,6 +114,24 @@ double b_ = 0;
 
 ## Checkpoint 2: Lazy Chunk Load
 
-- [ ] Install pager in AlexDataNode
-- [ ] Allocate page (`key_slots_`, `payload_slots_`, `data_slots_`, `bitmap_`) on serialize + store offset
-- [ ] Load on offset address based on mmap address
+- [x] Install pager in AlexDataNode
+- [x] Allocate page (`key_slots_`, `payload_slots_`, `data_slots_`, `bitmap_`) on serialize + store offset
+- [x] Load on offset address based on mmap address
+
+Disable lazy loading by passing `nullptr` pager to `Alex`.
+
+
+## Checkpoint 3: Lazy Node Load
+
+- [ ] Serialize all node types (`AlexModelNode` and `AlexDataNode`) to byte array
+- [ ] Allocate page for binary nodes + store offset in serialized `children_`
+- [ ] (???) Lazily adjust `children_` and data chunks (`key_slots_`, `payload_slots_`, `data_slots_`, `bitmap_`) as Alex access the arrays
+
+This change will be more involved because A) the accesses are spread over the codebase, and B) lazy offset adjustment has to be during lookup, after deserialization.
+
+
+## Bug: Cousin Pointers
+
+Currently we skip serializing cousin pointers altogether because A) it leads to stack overflow due to very deep recursion in large datasets, and B) our benchmark doesn't need cousin walking anyway.
+
+We could fix this by connecting `AlexDataNode` together at the end of loading. `link_data_nodes` or `link_all_data_nodes` seems relevant (and might just work). We won't fix for now to be generous because of B).

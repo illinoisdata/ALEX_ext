@@ -5,7 +5,8 @@
  * Simple benchmark that runs a mixture of point lookups and inserts on ALEX.
  *
  * Examples:
-    ./kv_benchmark --key_path=../resources/fb_1M_uint64_ks_0 --target_db_path=tmp/alex_whole/fb_1M_uint64 --out_path=tmp/out.txt
+    ./kv_benchmark --key_path=../resources/fb_1M_uint64_ks_0 --target_db_path=tmp/alex/fb_1M_uint64 --out_path=tmp/out.txt
+    ./kv_benchmark --key_path=../resources/fb_200M_uint64_ks_0 --target_db_path=tmp/alex/fb_200M_uint64 --out_path=tmp/out.txt
  */
 
 #include "../core/alex.h"
@@ -46,6 +47,7 @@ int main(int argc, char* argv[]) {
   std::string key_path = get_required(flags, "key_path");
   std::string target_db_path = get_required(flags, "target_db_path");
   std::string out_path = get_required(flags, "out_path");
+  std::string target_db_path_page = target_db_path + "_page";  // TODO: Configurable
 
   // Load keyset
   std::vector<uint64_t> queries;
@@ -77,7 +79,8 @@ int main(int argc, char* argv[]) {
   auto start_t = std::chrono::high_resolution_clock::now();
 
   // Load alex from file
-  alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index;
+  alex::ReadPager<KEY_TYPE, PAYLOAD_TYPE> pager(target_db_path_page);
+  alex::Alex<KEY_TYPE, PAYLOAD_TYPE> index(&pager);
   {
     std::ifstream ifs(target_db_path);
     boost::archive::binary_iarchive ia(ifs);
