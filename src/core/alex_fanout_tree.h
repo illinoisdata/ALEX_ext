@@ -347,10 +347,11 @@ template <class T, class P>
 int find_best_fanout_existing_node(const AlexModelNode<T, P>* parent,
                                    int bucketID, int total_keys,
                                    std::vector<FTNode>& used_fanout_tree_nodes,
-                                   int max_fanout) {
+                                   int max_fanout,
+                                   Pager<T, P>* pager) {
   // Repeatedly add levels to the fanout tree until the overall cost of each
   // level starts to increase
-  auto node = static_cast<AlexDataNode<T, P>*>(parent->children_[bucketID]);
+  auto node = static_cast<AlexDataNode<T, P>*>(parent->children_[bucketID]->get(pager));
   int num_keys = node->num_keys_;
   int best_level = 0;
   double best_cost = std::numeric_limits<double>::max();

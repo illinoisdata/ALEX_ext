@@ -301,7 +301,7 @@ class Alex {
         allocator_(other.allocator_) {
     superroot_ =
         static_cast<model_node_type*>(copy_tree_recursive(other.superroot_));
-    root_node_ = superroot_->children_[0];
+    root_node_ = superroot_->children_[0]->get(pager_);
   }
 
   Alex& operator=(const self_type& other) {
@@ -321,7 +321,7 @@ class Alex {
       allocator_ = other.allocator_;
       superroot_ =
           static_cast<model_node_type*>(copy_tree_recursive(other.superroot_));
-      root_node_ = superroot_->children_[0];
+      root_node_ = superroot_->children_[0]->get(pager_);
     }
     return *this;
   }
@@ -351,11 +351,11 @@ class Alex {
           model_node_type(*static_cast<const model_node_type*>(node));
       int cur = 0;
       while (cur < node_copy->num_children_) {
-        AlexNode<T, P>* child_node = node_copy->children_[cur];
+        AlexNode<T, P>* child_node = node_copy->children_[cur]->get(pager_);
         AlexNode<T, P>* child_node_copy = copy_tree_recursive(child_node);
         int repeats = 1 << child_node_copy->duplication_factor_;
         for (int i = cur; i < cur + repeats; i++) {
-          node_copy->children_[i] = child_node_copy;
+          node_copy->children_[i] = new LazyAlexNode(child_node_copy, pager_);
         }
         cur += repeats;
       }
@@ -425,7 +425,7 @@ class Alex {
       if (traversal_path) {
         traversal_path->push_back({node, bucketID});
       }
-      cur = node->children_[bucketID];
+      cur = node->children_[bucketID]->get(pager_);
       if (cur->is_leaf_) {
         stats_.num_node_lookups += cur->level_;
         auto leaf = static_cast<data_node_type*>(cur);
@@ -508,11 +508,11 @@ class Alex {
         }
         int correct_bucketID = start_bucketID - 1;
         tn.bucketID = correct_bucketID;
-        AlexNode<T, P>* cur = parent->children_[correct_bucketID];
+        AlexNode<T, P>* cur = parent->children_[correct_bucketID]->get(pager_);
         while (!cur->is_leaf_) {
           auto node = static_cast<model_node_type*>(cur);
           traversal_path.push_back({node, node->num_children_ - 1});
-          cur = node->children_[node->num_children_ - 1];
+          cur = node->children_[node->num_children_ - 1]->get(pager_);
         }
         assert(cur == leaf->prev_leaf_);
       } else {
@@ -535,11 +535,11 @@ class Alex {
         }
         int correct_bucketID = end_bucketID;
         tn.bucketID = correct_bucketID;
-        AlexNode<T, P>* cur = parent->children_[correct_bucketID];
+        AlexNode<T, P>* cur = parent->children_[correct_bucketID]->get(pager_);
         while (!cur->is_leaf_) {
           auto node = static_cast<model_node_type*>(cur);
           traversal_path.push_back({node, 0});
-          cur = node->children_[0];
+          cur = node->children_[0]->get(pager_);
         }
         assert(cur == leaf->next_leaf_);
       } else {
@@ -553,7 +553,7 @@ class Alex {
     AlexNode<T, P>* cur = root_node_;
 
     while (!cur->is_leaf_) {
-      cur = static_cast<model_node_type*>(cur)->children_[0];
+      cur = static_cast<model_node_type*>(cur)->children_[0]->get(pager_);
     }
     return static_cast<data_node_type*>(cur);
   }
@@ -564,7 +564,7 @@ class Alex {
 
     while (!cur->is_leaf_) {
       auto node = static_cast<model_node_type*>(cur);
-      cur = node->children_[node->num_children_ - 1];
+      cur = node->children_[node->num_children_ - 1]->get(pager_);
     }
     return static_cast<data_node_type*>(cur);
   }
@@ -632,9 +632,11 @@ class Alex {
     if (node == nullptr) {
       return;
     } else if (node->is_leaf_) {
+      // std::cout << "Destroying leaf " << node << std::endl;
       data_node_allocator().destroy(static_cast<data_node_type*>(node));
       data_node_allocator().deallocate(static_cast<data_node_type*>(node), 1);
     } else {
+      // std::cout << "Destroying model " << node << std::endl;
       model_node_allocator().destroy(static_cast<model_node_type*>(node));
       model_node_allocator().deallocate(static_cast<model_node_type*>(node), 1);
     }
@@ -703,7 +705,7 @@ class Alex {
         model_node_type(static_cast<short>(root_node_->level_ - 1), pager_, allocator_);
     superroot_->num_children_ = 1;
     superroot_->children_ =
-        new (pointer_allocator().allocate(1)) AlexNode<T, P>*[1];
+        new (pointer_allocator().allocate(1)) LazyAlexNode<T, P>*[1];
     update_superroot_pointer();
   }
 
@@ -725,7 +727,7 @@ class Alex {
   }
 
   void update_superroot_pointer() {
-    superroot_->children_[0] = root_node_;
+    superroot_->children_[0] = new LazyAlexNode(root_node_, pager_);
     superroot_->level_ = static_cast<short>(root_node_->level_ - 1);
   }
 
@@ -810,7 +812,7 @@ class Alex {
       model_node->model_.b_ = node->model_.b_ * fanout;
       model_node->num_children_ = fanout;
       model_node->children_ =
-          new (pointer_allocator().allocate(fanout)) AlexNode<T, P>*[fanout];
+          new (pointer_allocator().allocate(fanout)) LazyAlexNode<T, P>*[fanout];
 
       // Instantiate all the child nodes and recurse
       int cur = 0;
@@ -828,19 +830,21 @@ class Alex {
             (right_value - node->model_.b_) / node->model_.a_;
         child_node->model_.a_ = 1.0 / (right_boundary - left_boundary);
         child_node->model_.b_ = -child_node->model_.a_ * left_boundary;
-        model_node->children_[cur] = child_node;
+        model_node->children_[cur] = new LazyAlexNode(child_node, pager_);
         LinearModel<T> child_data_node_model(tree_node.a, tree_node.b);
+        AlexNode<T, P>* node_ptr = model_node->children_[cur]->get(pager_);
         bulk_load_node(values + tree_node.left_boundary,
                        tree_node.right_boundary - tree_node.left_boundary,
-                       model_node->children_[cur], total_keys,
+                       node_ptr, total_keys,
                        &child_data_node_model);
-        model_node->children_[cur]->duplication_factor_ =
+        model_node->children_[cur] = new LazyAlexNode(node_ptr, pager_);
+        model_node->children_[cur]->get(pager_)->duplication_factor_ =
             static_cast<uint8_t>(best_fanout_tree_depth - tree_node.level);
-        if (model_node->children_[cur]->is_leaf_) {
-          static_cast<data_node_type*>(model_node->children_[cur])
+        if (model_node->children_[cur]->get(pager_)->is_leaf_) {
+          static_cast<data_node_type*>(model_node->children_[cur]->get(pager_))
               ->expected_avg_exp_search_iterations_ =
               tree_node.expected_avg_search_iterations;
-          static_cast<data_node_type*>(model_node->children_[cur])
+          static_cast<data_node_type*>(model_node->children_[cur]->get(pager_))
               ->expected_avg_shifts_ = tree_node.expected_avg_shifts;
         }
         for (int i = cur + 1; i < cur + repeats; i++) {
@@ -1052,7 +1056,7 @@ class Alex {
     AlexNode<T, P>* cur = root_node_;
 
     while (!cur->is_leaf_) {
-      cur = static_cast<model_node_type*>(cur)->children_[0];
+      cur = static_cast<model_node_type*>(cur)->children_[0]->get(pager_);
     }
     return Iterator(static_cast<data_node_type*>(cur), 0);
   }
@@ -1068,7 +1072,7 @@ class Alex {
     AlexNode<T, P>* cur = root_node_;
 
     while (!cur->is_leaf_) {
-      cur = static_cast<model_node_type*>(cur)->children_[0];
+      cur = static_cast<model_node_type*>(cur)->children_[0]->get(pager_);
     }
     return ConstIterator(static_cast<data_node_type*>(cur), 0);
   }
@@ -1085,7 +1089,7 @@ class Alex {
 
     while (!cur->is_leaf_) {
       auto model_node = static_cast<model_node_type*>(cur);
-      cur = model_node->children_[model_node->num_children_ - 1];
+      cur = model_node->children_[model_node->num_children_ - 1]->get(pager_);
     }
     auto data_node = static_cast<data_node_type*>(cur);
     return ReverseIterator(data_node, data_node->data_capacity_ - 1);
@@ -1103,7 +1107,7 @@ class Alex {
 
     while (!cur->is_leaf_) {
       auto model_node = static_cast<model_node_type*>(cur);
-      cur = model_node->children_[model_node->num_children_ - 1];
+      cur = model_node->children_[model_node->num_children_ - 1]->get(pager_);
     }
     auto data_node = static_cast<data_node_type*>(cur);
     return ConstReverseIterator(data_node, data_node->data_capacity_ - 1);
@@ -1189,12 +1193,12 @@ class Alex {
           // decide between no split (i.e., expand and retrain) or splitting in
           // 2
           fanout_tree_depth = fanout_tree::find_best_fanout_existing_node<T, P>(
-              parent, bucketID, stats_.num_keys, used_fanout_tree_nodes, 2);
+              parent, bucketID, stats_.num_keys, used_fanout_tree_nodes, 2, pager_);
         } else if (experimental_params_.splitting_policy_method == 2) {
           // use full fanout tree to decide fanout
           fanout_tree_depth = fanout_tree::find_best_fanout_existing_node<T, P>(
               parent, bucketID, stats_.num_keys, used_fanout_tree_nodes,
-              derived_params_.max_fanout);
+              derived_params_.max_fanout, pager_);
         }
         int best_fanout = 1 << fanout_tree_depth;
         stats_.cost_computation_time +=
@@ -1313,7 +1317,7 @@ class Alex {
     std::vector<SplitDecisionCosts> traversal_costs;
     for (const TraversalNode& tn : traversal_path) {
       double stop_cost;
-      AlexNode<T, P>* next = tn.node->children_[tn.bucketID];
+      AlexNode<T, P>* next = tn.node->children_[tn.bucketID]->get(pager_);
       if (next->duplication_factor_ > 0) {
         stop_cost = 0;
       } else {
@@ -1426,7 +1430,7 @@ class Alex {
 
       int new_num_children = root->num_children_ * expansion_factor;
       auto new_children = new (pointer_allocator().allocate(new_num_children))
-          AlexNode<T, P>*[new_num_children];
+          LazyAlexNode<T, P>*[new_num_children];
       int copy_start;
       if (expand_left) {
         copy_start = new_num_children - root->num_children_;
@@ -1455,12 +1459,12 @@ class Alex {
       }
       new_root->num_children_ = expansion_factor;
       new_root->children_ = new (pointer_allocator().allocate(expansion_factor))
-          AlexNode<T, P>*[expansion_factor];
+          LazyAlexNode<T, P>*[expansion_factor];
       if (expand_left) {
-        new_root->children_[expansion_factor - 1] = root;
+        new_root->children_[expansion_factor - 1] = new LazyAlexNode(root, pager_);
         new_nodes_start = 0;
       } else {
-        new_root->children_[0] = root;
+        new_root->children_[0] = new LazyAlexNode(root, pager_);
         new_nodes_start = 1;
       }
       new_nodes_end = new_nodes_start + expansion_factor - 1;
@@ -1515,7 +1519,7 @@ class Alex {
         new_node->next_leaf_ = next;
         next = new_node;
         for (int j = i - 1; j >= i - n; j--) {
-          root->children_[j] = new_node;
+          root->children_[j] = new LazyAlexNode(new_node, pager_);
         }
       }
     } else {
@@ -1544,7 +1548,7 @@ class Alex {
         new_node->prev_leaf_ = prev;
         prev = new_node;
         for (int j = i; j < i + n; j++) {
-          root->children_[j] = new_node;
+          root->children_[j] = new LazyAlexNode(new_node, pager_);
         }
       }
     }
@@ -1554,14 +1558,14 @@ class Alex {
     if (expand_left) {
       outermost_node->erase_range(new_domain_min, istats_.key_domain_min_);
       auto last_new_leaf =
-          static_cast<data_node_type*>(root->children_[new_nodes_end - 1]);
+          static_cast<data_node_type*>(root->children_[new_nodes_end - 1]->get(pager_));
       outermost_node->prev_leaf_ = last_new_leaf;
       last_new_leaf->next_leaf_ = outermost_node;
     } else {
       outermost_node->erase_range(istats_.key_domain_max_, new_domain_max,
                                   true);
       auto first_new_leaf =
-          static_cast<data_node_type*>(root->children_[new_nodes_start]);
+          static_cast<data_node_type*>(root->children_[new_nodes_start]->get(pager_));
       outermost_node->next_leaf_ = first_new_leaf;
       first_new_leaf->prev_leaf_ = outermost_node;
     }
@@ -1578,7 +1582,7 @@ class Alex {
       model_node_type* parent, int bucketID, int fanout_tree_depth,
       std::vector<fanout_tree::FTNode>& used_fanout_tree_nodes,
       bool reuse_model) {
-    auto leaf = static_cast<data_node_type*>(parent->children_[bucketID]);
+    auto leaf = static_cast<data_node_type*>(parent->children_[bucketID]->get(pager_));
     stats_.num_downward_splits++;
     stats_.num_downward_split_keys += leaf->num_keys_;
 
@@ -1589,7 +1593,7 @@ class Alex {
     new_node->duplication_factor_ = leaf->duplication_factor_;
     new_node->num_children_ = fanout;
     new_node->children_ =
-        new (pointer_allocator().allocate(fanout)) AlexNode<T, P>*[fanout];
+        new (pointer_allocator().allocate(fanout)) LazyAlexNode<T, P>*[fanout];
 
     int repeats = 1 << leaf->duplication_factor_;
     int start_bucketID =
@@ -1617,7 +1621,7 @@ class Alex {
     stats_.num_data_nodes--;
     stats_.num_model_nodes++;
     for (int i = start_bucketID; i < end_bucketID; i++) {
-      parent->children_[i] = new_node;
+      parent->children_[i] = new LazyAlexNode(new_node, pager_);
     }
     if (parent == superroot_) {
       root_node_ = new_node;
@@ -1633,7 +1637,7 @@ class Alex {
                       int fanout_tree_depth,
                       std::vector<fanout_tree::FTNode>& used_fanout_tree_nodes,
                       bool reuse_model) {
-    auto leaf = static_cast<data_node_type*>(parent->children_[bucketID]);
+    auto leaf = static_cast<data_node_type*>(parent->children_[bucketID]->get(pager_));
     stats_.num_sideways_splits++;
     stats_.num_sideways_split_keys += leaf->num_keys_;
 
@@ -1729,10 +1733,10 @@ class Alex {
         static_cast<uint8_t>(duplication_factor - 1);
 
     for (int i = start_bucketID; i < mid_bucketID; i++) {
-      parent->children_[i] = left_leaf;
+      parent->children_[i] = new LazyAlexNode(left_leaf, pager_);
     }
     for (int i = mid_bucketID; i < end_bucketID; i++) {
-      parent->children_[i] = right_leaf;
+      parent->children_[i] = new LazyAlexNode(right_leaf, pager_);
     }
     link_data_nodes(old_node, left_leaf, right_leaf);
   }
@@ -1803,7 +1807,7 @@ class Alex {
         prev_leaf->next_leaf_ = child_node;
       }
       for (int i = cur; i < cur + child_node_repeats; i++) {
-        parent->children_[i] = child_node;
+        parent->children_[i] = new LazyAlexNode(child_node, pager_);
       }
       cur += child_node_repeats;
       prev_leaf = child_node;
@@ -1829,7 +1833,7 @@ class Alex {
     const TraversalNode& parent_path_node = traversal_path.back();
     model_node_type* parent = parent_path_node.node;
     auto leaf = static_cast<data_node_type*>(
-        parent->children_[parent_path_node.bucketID]);
+        parent->children_[parent_path_node.bucketID]->get(pager_));
     int leaf_repeats = 1 << (leaf->duplication_factor_);
     int leaf_start_bucketID =
         parent_path_node.bucketID - (parent_path_node.bucketID % leaf_repeats);
@@ -1931,9 +1935,9 @@ class Alex {
       // If one of the resulting halves will only have one child pointer, we
       // should "pull up" that child
       bool pull_up_left_child = false, pull_up_right_child = false;
-      AlexNode<T, P>* left_half_first_child = cur_node->children_[0];
+      AlexNode<T, P>* left_half_first_child = cur_node->children_[0]->get(pager_);
       AlexNode<T, P>* right_half_first_child =
-          cur_node->children_[cur_node->num_children_ / 2];
+          cur_node->children_[cur_node->num_children_ / 2]->get(pager_);
       if (double_left_half &&
           (1 << right_half_first_child->duplication_factor_) ==
               cur_node->num_children_ / 2) {
@@ -1967,15 +1971,15 @@ class Alex {
         left_split->num_children_ = cur_node->num_children_;
         left_split->children_ =
             new (pointer_allocator().allocate(left_split->num_children_))
-                AlexNode<T, P>*[left_split->num_children_];
+                LazyAlexNode<T, P>*[left_split->num_children_];
         left_split->model_.a_ = cur_node->model_.a_ * 2;
         left_split->model_.b_ = cur_node->model_.b_ * 2;
         int cur = 0;
         while (cur < cur_node->num_children_ / 2) {
-          AlexNode<T, P>* cur_child = cur_node->children_[cur];
+          AlexNode<T, P>* cur_child = cur_node->children_[cur]->get(pager_);
           int cur_child_repeats = 1 << cur_child->duplication_factor_;
           for (int i = 2 * cur; i < 2 * (cur + cur_child_repeats); i++) {
-            left_split->children_[i] = cur_child;
+            left_split->children_[i] = new LazyAlexNode(cur_child, pager_);
           }
           cur_child->duplication_factor_++;
           cur += cur_child_repeats;
@@ -1983,13 +1987,13 @@ class Alex {
         assert(cur == cur_node->num_children_ / 2);
 
         if (pull_up_right_child) {
-          next_right_split = cur_node->children_[cur_node->num_children_ / 2];
+          next_right_split = cur_node->children_[cur_node->num_children_ / 2]->get(pager_);
           next_right_split->level_ = cur_node->level_;
         } else {
           right_split->num_children_ = cur_node->num_children_ / 2;
           right_split->children_ =
               new (pointer_allocator().allocate(right_split->num_children_))
-                  AlexNode<T, P>*[right_split->num_children_];
+                  LazyAlexNode<T, P>*[right_split->num_children_];
           right_split->model_.a_ = cur_node->model_.a_;
           right_split->model_.b_ =
               cur_node->model_.b_ - cur_node->num_children_ / 2;
@@ -2011,10 +2015,10 @@ class Alex {
         int end_bucketID =
             start_bucketID + repeats;  // first bucket with next child
         for (int i = start_bucketID; i < mid_bucketID; i++) {
-          left_split->children_[i] = prev_left_split;
+          left_split->children_[i] = new LazyAlexNode(prev_left_split, pager_);
         }
         for (int i = mid_bucketID; i < end_bucketID; i++) {
-          left_split->children_[i] = prev_right_split;
+          left_split->children_[i] = new LazyAlexNode(prev_right_split, pager_);
         }
         next_left_split = left_split;
       } else {
@@ -2024,13 +2028,13 @@ class Alex {
           *new_parent = right_split;
         }
         if (pull_up_left_child) {
-          next_left_split = cur_node->children_[0];
+          next_left_split = cur_node->children_[0]->get(pager_);
           next_left_split->level_ = cur_node->level_;
         } else {
           left_split->num_children_ = cur_node->num_children_ / 2;
           left_split->children_ =
               new (pointer_allocator().allocate(left_split->num_children_))
-                  AlexNode<T, P>*[left_split->num_children_];
+                  LazyAlexNode<T, P>*[left_split->num_children_];
           left_split->model_.a_ = cur_node->model_.a_;
           left_split->model_.b_ = cur_node->model_.b_;
           int j = 0;
@@ -2044,18 +2048,18 @@ class Alex {
         right_split->num_children_ = cur_node->num_children_;
         right_split->children_ =
             new (pointer_allocator().allocate(right_split->num_children_))
-                AlexNode<T, P>*[right_split->num_children_];
+                LazyAlexNode<T, P>*[right_split->num_children_];
         right_split->model_.a_ = cur_node->model_.a_ * 2;
         right_split->model_.b_ =
             (cur_node->model_.b_ - cur_node->num_children_ / 2) * 2;
         int cur = cur_node->num_children_ / 2;
         while (cur < cur_node->num_children_) {
-          AlexNode<T, P>* cur_child = cur_node->children_[cur];
+          AlexNode<T, P>* cur_child = cur_node->children_[cur]->get(pager_);
           int cur_child_repeats = 1 << cur_child->duplication_factor_;
           int right_child_idx = cur - cur_node->num_children_ / 2;
           for (int i = 2 * right_child_idx;
                i < 2 * (right_child_idx + cur_child_repeats); i++) {
-            right_split->children_[i] = cur_child;
+            right_split->children_[i] = new LazyAlexNode(cur_child, pager_);
           }
           cur_child->duplication_factor_++;
           cur += cur_child_repeats;
@@ -2072,10 +2076,10 @@ class Alex {
         int end_bucketID =
             start_bucketID + repeats;  // first bucket with next child
         for (int i = start_bucketID; i < mid_bucketID; i++) {
-          right_split->children_[i] = prev_left_split;
+          right_split->children_[i] = new LazyAlexNode(prev_left_split, pager_);
         }
         for (int i = mid_bucketID; i < end_bucketID; i++) {
-          right_split->children_[i] = prev_right_split;
+          right_split->children_[i] = new LazyAlexNode(prev_right_split, pager_);
         }
         next_right_split = right_split;
       }
@@ -2146,10 +2150,10 @@ class Alex {
     int end_bucketID =
         start_bucketID + repeats;  // first bucket with next child
     for (int i = start_bucketID; i < mid_bucketID; i++) {
-      top_node->children_[i] = prev_left_split;
+      top_node->children_[i] = new LazyAlexNode(prev_left_split, pager_);
     }
     for (int i = mid_bucketID; i < end_bucketID; i++) {
-      top_node->children_[i] = prev_right_split;
+      top_node->children_[i] = new LazyAlexNode(prev_right_split, pager_);
     }
 
     for (auto node : to_delete) {
@@ -2266,13 +2270,13 @@ class Alex {
         data_node_type* adjacent_leaf = nullptr;
 
         // check if adjacent node is a leaf
-        if (adjacent_to_right && parent->children_[end_bucketID]->is_leaf_) {
+        if (adjacent_to_right && parent->children_[end_bucketID]->get(pager_)->is_leaf_) {
           adjacent_leaf =
-              static_cast<data_node_type*>(parent->children_[end_bucketID]);
+              static_cast<data_node_type*>(parent->children_[end_bucketID]->get(pager_));
         } else if (!adjacent_to_right &&
-                   parent->children_[start_bucketID - 1]->is_leaf_) {
+                   parent->children_[start_bucketID - 1]->get(pager_)->is_leaf_) {
           adjacent_leaf = static_cast<data_node_type*>(
-              parent->children_[start_bucketID - 1]);
+              parent->children_[start_bucketID - 1]->get(pager_));
         } else {
           break;  // unable to merge with sibling leaf
         }
@@ -2284,7 +2288,7 @@ class Alex {
 
         // merge with adjacent leaf
         for (int i = start_bucketID; i < end_bucketID; i++) {
-          parent->children_[i] = adjacent_leaf;
+          parent->children_[i] = new LazyAlexNode(adjacent_leaf, pager_);
         }
         if (adjacent_to_right) {
           adjacent_leaf->prev_leaf_ = leaf->prev_leaf_;
@@ -2326,7 +2330,7 @@ class Alex {
         int start_bucketID = bucketID - (bucketID % repeats);
         int end_bucketID = start_bucketID + repeats;
         for (int i = start_bucketID; i < end_bucketID; i++) {
-          parent->children_[i] = leaf;
+          parent->children_[i] = new LazyAlexNode(leaf, pager_);
         }
       } else {
         break;  // unable to merge up
@@ -2411,10 +2415,10 @@ class Alex {
           }
         }
 
-        node_stack.push(node->children_[node->num_children_ - 1]);
+        node_stack.push(node->children_[node->num_children_ - 1]->get(pager_));
         for (int i = node->num_children_ - 2; i >= 0; i--) {
-          if (node->children_[i] != node->children_[i + 1]) {
-            node_stack.push(node->children_[i]);
+          if (node->children_[i] != node->children_[i + 1] && node->children_[i]->get(pager_) != node->children_[i + 1]->get(pager_)) {
+            node_stack.push(node->children_[i]->get(pager_));
           }
         }
       } else {
@@ -2966,16 +2970,17 @@ class Alex {
     const self_type* index_;
     AlexNode<T, P>* cur_node_;
     std::stack<AlexNode<T, P>*> node_stack_;  // helps with traversal
+    Pager<T, P>* pager_;
 
     // Start with root as cur and all children of root in stack
     explicit NodeIterator(const self_type* index)
-        : index_(index), cur_node_(index->root_node_) {
+        : index_(index), cur_node_(index->root_node_), pager_(index->pager_) {
       if (cur_node_ && !cur_node_->is_leaf_) {
         auto node = static_cast<model_node_type*>(cur_node_);
-        node_stack_.push(node->children_[node->num_children_ - 1]);
+        node_stack_.push(node->children_[node->num_children_ - 1]->get(pager_));
         for (int i = node->num_children_ - 2; i >= 0; i--) {
-          if (node->children_[i] != node->children_[i + 1]) {
-            node_stack_.push(node->children_[i]);
+          if (node->children_[i] != node->children_[i + 1] && node->children_[i]->get(pager_) != node->children_[i + 1]->get(pager_)) {
+            node_stack_.push(node->children_[i]->get(pager_));
           }
         }
       }
@@ -2994,10 +2999,10 @@ class Alex {
 
       if (!cur_node_->is_leaf_) {
         auto node = static_cast<model_node_type*>(cur_node_);
-        node_stack_.push(node->children_[node->num_children_ - 1]);
+        node_stack_.push(node->children_[node->num_children_ - 1]->get(pager_));
         for (int i = node->num_children_ - 2; i >= 0; i--) {
-          if (node->children_[i] != node->children_[i + 1]) {
-            node_stack_.push(node->children_[i]);
+          if (node->children_[i] != node->children_[i + 1] && node->children_[i]->get(pager_) != node->children_[i + 1]->get(pager_)) {
+            node_stack_.push(node->children_[i]->get(pager_));
           }
         }
       }
@@ -3068,10 +3073,10 @@ class Alex {
 
     // Serialize node chunky data once
     // std::cout << "  Alex -> data chunks" << std::endl;
-    for (NodeIterator node_it = NodeIterator(this); !node_it.is_end(); node_it.next()) {
-      AlexNode<T, P>* node = node_it.current();
-      node->serialize_with_pager(ar, pager_);
-    }
+    // for (NodeIterator node_it = NodeIterator(this); !node_it.is_end(); node_it.next()) {
+    //   AlexNode<T, P>* node = node_it.current();
+    //   node->serialize_with_pager(ar, pager_);
+    // }
 
     // // Link cousin pointers (TODO: test to confirm)
     // link_all_data_nodes();

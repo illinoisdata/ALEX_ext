@@ -16,20 +16,24 @@ public:
 
   virtual ~Pager() {}
 
-  virtual size_t save_t(T* arr __attribute__((unused)), size_t n __attribute__((unused))) {
+  virtual size_t save_t(const T* arr __attribute__((unused)), size_t n __attribute__((unused))) {
     throw std::logic_error("Not implemented: save_t");
   }
 
-  virtual size_t save_p(P* arr __attribute__((unused)), size_t n __attribute__((unused))) {
+  virtual size_t save_p(const P* arr __attribute__((unused)), size_t n __attribute__((unused))) {
     throw std::logic_error("Not implemented: save_p");
   }
 
-  virtual size_t save_pair(V* arr __attribute__((unused)), size_t n __attribute__((unused))) {
+  virtual size_t save_pair(const V* arr __attribute__((unused)), size_t n __attribute__((unused))) {
     throw std::logic_error("Not implemented: save_pair");
   }
 
-  virtual size_t save_u64(uint64_t* arr __attribute__((unused)), size_t n __attribute__((unused))) {
+  virtual size_t save_u64(const uint64_t* arr __attribute__((unused)), size_t n __attribute__((unused))) {
     throw std::logic_error("Not implemented: save_u64");
+  }
+
+  virtual size_t save_char(const char* arr __attribute__((unused)), size_t n __attribute__((unused))) {
+    throw std::logic_error("Not implemented: save_char");
   }
 
   virtual T* load_t(size_t offset __attribute__((unused))) {
@@ -46,6 +50,10 @@ public:
 
   virtual uint64_t* load_u64(size_t offset __attribute__((unused))) {
     throw std::logic_error("Not implemented: load_u64");
+  }
+
+  virtual char* load_char(size_t offset __attribute__((unused))) {
+    throw std::logic_error("Not implemented: load_char");
   }
 };
 
@@ -67,24 +75,28 @@ public:
     this->file_.close();
   }
 
-  size_t save_t(T* arr, size_t n) override {
+  size_t save_t(const T* arr, size_t n) override {
     return save_inner<T>(arr, n);
   }
 
-  size_t save_p(P* arr, size_t n) override {
+  size_t save_p(const P* arr, size_t n) override {
     return save_inner<P>(arr, n);
   }
 
-  // size_t save_pair(V* arr, size_t n) override {
+  // size_t save_pair(const V* arr, size_t n) override {
   //   return save_inner<V>(arr, n);
   // }
 
-  size_t save_u64(uint64_t* arr, size_t n) override {
+  size_t save_u64(const uint64_t* arr, size_t n) override {
     return save_inner<uint64_t>(arr, n);
   }
 
+  size_t save_char(const char* arr, size_t n) override {
+    return save_inner<char>(arr, n);
+  }
+
   template<class K>
-  size_t save_inner(K* arr, size_t n) {
+  size_t save_inner(const K* arr, size_t n) {
     size_t offset = this->current_size_;
     this->file_.write(reinterpret_cast<const char*>(arr), n * sizeof(K));
     this->current_size_ += n * sizeof(K);
@@ -161,6 +173,10 @@ public:
 
   virtual uint64_t* load_u64(size_t offset) override {
     return load_inner<uint64_t>(offset);
+  }
+
+  virtual char* load_char(size_t offset) override {
+    return load_inner<char>(offset);
   }
 
   template<class K>

@@ -110,11 +110,121 @@ class AlexNode {
 };
 
 template <class T, class P, class Alloc = std::allocator<std::pair<T, P>>>
+class AlexModelNode;
+
+template <class T, class P, class Compare = AlexCompare,
+          class Alloc = std::allocator<std::pair<T, P>>,
+          bool allow_duplicates = true>
+class AlexDataNode;
+
+template <class T, class P, class Compare = AlexCompare,
+          class Alloc = std::allocator<std::pair<T, P>>,
+          bool allow_duplicates = true>
+class LazyAlexNode {
+private:
+  // For convenience
+  typedef AlexModelNode<T, P, Alloc> model_node_type;
+  typedef AlexDataNode<T, P, Compare, Alloc, allow_duplicates> data_node_type;
+  typedef Chunk<T, P, Compare, Alloc> chunk_type;
+  typedef DataChunk<T, P, Compare, Alloc> data_chunk_type;
+
+  // Invariant: if node_ is null, rcv_offset_ must be defined.
+  AlexNode<T, P>* node_ = nullptr;
+  size_t rcv_offset_ = std::numeric_limits<size_t>::max();
+  size_t rcv_length_ = 0;
+
+  // To allocate node during serialization
+  Pager<T, P>* pager_ = nullptr;  // Only for serialize/save
+  bool has_pager_ = false;
+
+public:
+  // Set pager to non-null to enable lazy load 
+  explicit LazyAlexNode(AlexNode<T, P>* node, Pager<T, P>* pager) : node_(node), pager_(pager) {
+    has_pager_ = (pager_ != nullptr);
+  }
+  ~LazyAlexNode() = default;
+  AlexNode<T, P>* get(Pager<T, P>* pager) {
+    if (node_ == nullptr && rcv_length_ > 0) {
+      this->recover(pager);
+      assert(node_ != nullptr);
+    }
+    return node_;
+  }
+private:
+  void recover(Pager<T, P>* pager) {
+    assert(rcv_offset_ != std::numeric_limits<size_t>::max());
+    assert(rcv_length_ > 0);
+    assert(has_pager_);
+    pager_ = pager;  // Unnecessary
+    char* serial_str_begin = pager->load_char(rcv_offset_);
+    boost::iostreams::basic_array_source<char> device(serial_str_begin, rcv_length_);
+    boost::iostreams::stream<boost::iostreams::basic_array_source<char>> s(device);
+    boost::archive::binary_iarchive ia(s);
+    ia.register_type<model_node_type>();
+    ia.register_type<data_node_type>();
+    ia.register_type<chunk_type>();
+    ia.register_type<data_chunk_type>();
+    ia >> node_;
+    node_->serialize_with_pager(ia, pager);
+  }
+
+private:
+  LazyAlexNode() {}  // for boost::serialization only
+  friend class boost::serialization::access;
+  template<class Archive>
+  void save(Archive & ar, const unsigned int version __attribute__((unused))) const {
+    ar << has_pager_;
+    if (!has_pager_) {
+      // Continue serialize recursion
+      // std::cout << "LazyAlexNode::save" << std::endl;
+      ar << node_;
+    } else {
+      // Save partial to prepare for lazy load
+      // First, turn the node into bytes
+      assert(node_ != nullptr);
+      std::string serial_str;
+      boost::iostreams::back_insert_device<std::string> inserter(serial_str);
+      boost::iostreams::stream<boost::iostreams::back_insert_device<std::string> > s(inserter);
+      boost::archive::binary_oarchive oa(s);
+      oa.register_type<model_node_type>();
+      oa.register_type<data_node_type>();
+      oa.register_type<chunk_type>();
+      oa.register_type<data_chunk_type>();
+      oa << node_;
+      node_->serialize_with_pager(oa, pager_);
+      s.flush();
+
+      // Allocate these bytes on pager
+      size_t rcv_offset = pager_->save_char(serial_str.c_str(), serial_str.length());
+      size_t rcv_length = serial_str.length();
+      ar << rcv_offset;
+      ar << rcv_length;
+      // std::cout << "LazyAlexNode::save::lazy, rcv_offset= " << rcv_offset << ", rcv_length= " << rcv_length << std::endl;
+    }
+  }
+  template<class Archive>
+  void load(Archive & ar, const unsigned int version __attribute__((unused))) {
+    ar >> has_pager_;
+    if (!has_pager_) {
+      // Continue serialize recursion
+      // std::cout << "LazyAlexNode::load" << std::endl;
+      ar >> node_;
+    } else {
+      // Load only the offset
+      ar >> rcv_offset_;
+      ar >> rcv_length_;
+      // std::cout << "LazyAlexNode::load::lazy, rcv_offset_= " << rcv_offset_ << ", rcv_length_= " << rcv_length_ << std::endl;
+    }
+  }
+  BOOST_SERIALIZATION_SPLIT_MEMBER()
+};
+
+template <class T, class P, class Alloc>
 class AlexModelNode : public AlexNode<T, P> {
  public:
   typedef AlexModelNode<T, P, Alloc> self_type;
   typedef typename Alloc::template rebind<self_type>::other alloc_type;
-  typedef typename Alloc::template rebind<AlexNode<T, P>*>::other
+  typedef typename Alloc::template rebind<LazyAlexNode<T, P>*>::other
       pointer_alloc_type;
 
   const Alloc& allocator_;
@@ -123,7 +233,7 @@ class AlexModelNode : public AlexNode<T, P> {
   int num_children_ = 0;
 
   // Array of pointers to children
-  AlexNode<T, P>** children_ = nullptr;
+  LazyAlexNode<T, P>** children_ = nullptr;
 
   explicit AlexModelNode(Pager<T, P>* pager = nullptr, const Alloc& alloc = Alloc())
       : AlexNode<T, P>(0, false, pager), allocator_(alloc) {}
@@ -143,7 +253,7 @@ class AlexModelNode : public AlexNode<T, P> {
         allocator_(other.allocator_),
         num_children_(other.num_children_) {
     children_ = new (pointer_allocator().allocate(other.num_children_))
-        AlexNode<T, P>*[other.num_children_];
+        LazyAlexNode<T, P>*[other.num_children_];
     std::copy(other.children_, other.children_ + other.num_children_,
               children_);
   }
@@ -152,7 +262,7 @@ class AlexModelNode : public AlexNode<T, P> {
   inline AlexNode<T, P>* get_child_node(const T& key) {
     int bucketID = this->model_.predict(key);
     bucketID = std::min<int>(std::max<int>(bucketID, 0), num_children_ - 1);
-    return children_[bucketID];
+    return children_[bucketID]->get(AlexNode<T, P>::pager_);
   }
 
   // Expand by a power of 2 by creating duplicates of all existing child
@@ -165,14 +275,14 @@ class AlexModelNode : public AlexNode<T, P> {
     int expansion_factor = 1 << log2_expansion_factor;
     int num_new_children = num_children_ * expansion_factor;
     auto new_children = new (pointer_allocator().allocate(num_new_children))
-        AlexNode<T, P>*[num_new_children];
+        LazyAlexNode<T, P>*[num_new_children];
     int cur = 0;
     while (cur < num_children_) {
-      AlexNode<T, P>* cur_child = children_[cur];
+      AlexNode<T, P>* cur_child = children_[cur]->get(AlexNode<T, P>::pager_);
       int cur_child_repeats = 1 << cur_child->duplication_factor_;
       for (int i = expansion_factor * cur;
            i < expansion_factor * (cur + cur_child_repeats); i++) {
-        new_children[i] = cur_child;
+        new_children[i] = new LazyAlexNode(cur_child, AlexNode<T, P>::pager_);
       }
       cur_child->duplication_factor_ += log2_expansion_factor;
       cur += cur_child_repeats;
@@ -227,7 +337,7 @@ class AlexModelNode : public AlexNode<T, P> {
       return false;
     }
 
-    AlexNode<T, P>* cur_child = children_[0];
+    LazyAlexNode<T, P>* cur_child = children_[0];
     int cur_repeats = 1;
     int i;
     for (i = 1; i < num_children_; i++) {
@@ -329,7 +439,7 @@ class AlexModelNode : public AlexNode<T, P> {
     ar & num_children_;
     if (Archive::is_loading::value) {
       children_ = new (pointer_allocator().allocate(num_children_))
-          AlexNode<T, P>*[num_children_];
+          LazyAlexNode<T, P>*[num_children_];
     }
     for (int i = 0; i < num_children_; ++i) {
       ar & children_[i];
@@ -350,9 +460,9 @@ class AlexModelNode : public AlexNode<T, P> {
 * - Stats
 * - Debugging
 */
-template <class T, class P, class Compare = AlexCompare,
-          class Alloc = std::allocator<std::pair<T, P>>,
-          bool allow_duplicates = true>
+template <class T, class P, class Compare,
+          class Alloc,
+          bool allow_duplicates>
 class AlexDataNode : public AlexNode<T, P> {
  public:
   typedef std::pair<T, P> V;

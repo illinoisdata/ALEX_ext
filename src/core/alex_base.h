@@ -41,9 +41,12 @@ typedef unsigned __int32 uint32_t;
 #include <boost/archive/binary_iarchive.hpp>
 #include <boost/archive/text_oarchive.hpp>
 #include <boost/archive/text_iarchive.hpp>
+#include <boost/iostreams/stream.hpp>
+#include <boost/iostreams/device/back_inserter.hpp>
 #include <boost/serialization/base_object.hpp>
 #include <boost/serialization/export.hpp>
 #include <boost/serialization/serialization.hpp>
+#include <boost/serialization/unique_ptr.hpp>
 
 #ifdef _MSC_VER
 #define forceinline __forceinline

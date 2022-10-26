@@ -123,11 +123,9 @@ Disable lazy loading by passing `nullptr` pager to `Alex`.
 
 ## Checkpoint 3: Lazy Node Load
 
-- [ ] Serialize all node types (`AlexModelNode` and `AlexDataNode`) to byte array
-- [ ] Allocate page for binary nodes + store offset in serialized `children_`
-- [ ] (???) Lazily adjust `children_` and data chunks (`key_slots_`, `payload_slots_`, `data_slots_`, `bitmap_`) as Alex access the arrays
-
-This change will be more involved because A) the accesses are spread over the codebase, and B) lazy offset adjustment has to be during lookup, after deserialization.
+- [x] Serialize all node types (`AlexModelNode` and `AlexDataNode`) to byte array
+- [x] Allocate page for binary nodes + store offset in serialized `children_`
+- [x] Lazily adjust `children_` and data chunks (`key_slots_`, `payload_slots_`, `data_slots_`, `bitmap_`) as Alex access the arrays
 
 
 ## Bug: Cousin Pointers
