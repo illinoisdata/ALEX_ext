@@ -48,6 +48,10 @@ int main(int argc, char* argv[]) {
   std::string target_db_path = get_required(flags, "target_db_path");
   std::string out_path = get_required(flags, "out_path");
   std::string target_db_path_page = target_db_path + "_page";  // TODO: Configurable
+  std::string num_samples_str = get_with_default(flags, "num_samples", "0");  // number of queries
+  size_t num_samples = 0;
+  std::stringstream(num_samples_str) >> num_samples;
+  std::cout << "num_samples= " << num_samples << std::endl;
 
   // Load keyset
   std::vector<uint64_t> queries;
@@ -67,6 +71,9 @@ int main(int argc, char* argv[]) {
           queries.push_back(std::stoull(key));
           expected_ans.push_back(std::stoull(exp));
       }   
+  }
+  if (num_samples == 0) {
+      num_samples = queries.size();
   }
 
   // variables for milestone
@@ -89,7 +96,7 @@ int main(int argc, char* argv[]) {
   }
 
   // Issue queries and check answers
-  for (size_t t_idx = 0; t_idx < queries.size(); t_idx++) {
+  for (size_t t_idx = 0; t_idx < num_samples; t_idx++) {
     // Query key and answer
     uint64_t key = queries[t_idx];
     uint64_t answer = expected_ans[t_idx];  
@@ -106,7 +113,7 @@ int main(int argc, char* argv[]) {
     }
 
     // Step milestone
-    if (t_idx + 1 == count_milestone || t_idx + 1 == queries.size()) {
+    if (t_idx + 1 == count_milestone || t_idx + 1 == num_samples) {
       timestamps.push_back(report_t(t_idx, count_milestone, last_count_milestone, last_elapsed, start_t));    
     }
   }
