@@ -26,7 +26,7 @@ bash alex-build.sh /path/to/data /path/to/build_output
 
 Built indexes will be stored in `/path/to/build_output` folder
 
-## Benchmark
+## Benchmark (6.2 & 6.4)
 
 Benchmark over 40 key set of 1M keys
 
