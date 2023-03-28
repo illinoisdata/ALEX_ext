@@ -47,6 +47,10 @@ add_executable(kv_benchmark src/benchmark/kv_benchmark.cpp)
 target_link_libraries(kv_benchmark PUBLIC Boost::serialization)
 target_link_libraries(kv_benchmark PUBLIC Boost::iostreams)
 
+add_executable(kv_benchmark_rw src/benchmark/kv_benchmark_rw.cpp)
+target_link_libraries(kv_benchmark_rw PUBLIC Boost::serialization)
+target_link_libraries(kv_benchmark_rw PUBLIC Boost::iostreams)
+
 set(DOCTEST_DOWNLOAD_DIR ${CMAKE_CURRENT_BINARY_DIR}/doctest)
 file(DOWNLOAD
     https://raw.githubusercontent.com/onqtam/doctest/2.4.6/doctest/doctest.h
